@@ -19,7 +19,6 @@ import (
 	dockertypes "github.com/docker/engine-api/types"
 	eventtypes "github.com/docker/engine-api/types/events"
 	"github.com/docker/engine-api/types/filters"
-	swarm "github.com/docker/engine-api/types/swarm"
 	"github.com/docker/go-connections/sockets"
 	"github.com/docker/go-connections/tlsconfig"
 	"github.com/vdemeester/docker-events"
@@ -377,9 +376,10 @@ func listContainers(ctx context.Context, dockerClient client.APIClient) ([]docke
 // augment container labels with service labels if exists
 func augementContainerLabels(ctx context.Context, dockerClient client.APIClient, container dockertypes.ContainerJSON) {
 	// check if this container belongs to a service
-	label, err := getLabel(container, "com.docker.swarm.service.name")
+	id, err := getLabel(container, "com.docker.swarm.service.id")
 	if err == nil {
-		serviceAssociated, err := findService(ctx, dockerClient, label)
+		// find the service
+		serviceAssociated, _, err := dockerClient.ServiceInspectWithRaw(ctx, id)
 		if err == nil {
 			// append service labels to the containers labels
 			for key, value := range serviceAssociated.Spec.Labels {
@@ -388,24 +388,6 @@ func augementContainerLabels(ctx context.Context, dockerClient client.APIClient,
 			}
 		}
 	}
-}
-
-// find the service
-func findService(ctx context.Context, dockerClient client.APIClient, serviceName string) (swarm.Service, error) {
-	log.Debugf("Search service %s", serviceName)
-	serviceList, err := dockerClient.ServiceList(ctx, dockertypes.ServiceListOptions{})
-	if err != nil {
-		return swarm.Service{}, err
-	}
-
-	for _, service := range serviceList {
-		if service.Spec.Name == serviceName {
-			log.Debugf("Service %s found", serviceName)
-			return service, nil
-		}
-	}
-
-	return swarm.Service{}, errors.New("Service not found:" + serviceName)
 }
 
 // Escape beginning slash "/", convert all others to dash "-"
