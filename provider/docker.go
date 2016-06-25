@@ -19,13 +19,14 @@ import (
 	dockertypes "github.com/docker/engine-api/types"
 	eventtypes "github.com/docker/engine-api/types/events"
 	"github.com/docker/engine-api/types/filters"
+	swarm "github.com/docker/engine-api/types/swarm"
 	"github.com/docker/go-connections/sockets"
 	"github.com/docker/go-connections/tlsconfig"
 	"github.com/vdemeester/docker-events"
 )
 
 // DockerAPIVersion is a constant holding the version of the Docker API traefik will use
-const DockerAPIVersion string = "1.21"
+const DockerAPIVersion string = "1.22"
 
 // Docker holds configurations of the Docker provider.
 type Docker struct {
@@ -366,10 +367,45 @@ func listContainers(ctx context.Context, dockerClient client.APIClient) ([]docke
 		if err != nil {
 			log.Warnf("Failed to inspect container %s, error: %s", container.ID, err)
 		} else {
+			augementContainerLabels(ctx, dockerClient, containerInspected)
 			containersInspected = append(containersInspected, containerInspected)
 		}
 	}
 	return containersInspected, nil
+}
+
+// augment container labels with service labels if exists
+func augementContainerLabels(ctx context.Context, dockerClient client.APIClient, container dockertypes.ContainerJSON) {
+	// check if this container belongs to a service
+	label, err := getLabel(container, "com.docker.swarm.service.name")
+	if err == nil {
+		serviceAssociated, err := findService(ctx, dockerClient, label)
+		if err == nil {
+			// append service labels to the containers labels
+			for key, value := range serviceAssociated.Spec.Labels {
+				log.Debugf("Augment container's labels with %s => %s", key, value)
+				container.Config.Labels[key] = value
+			}
+		}
+	}
+}
+
+// find the service
+func findService(ctx context.Context, dockerClient client.APIClient, serviceName string) (swarm.Service, error) {
+	log.Debugf("Search service %s", serviceName)
+	serviceList, err := dockerClient.ServiceList(ctx, dockertypes.ServiceListOptions{})
+	if err != nil {
+		return swarm.Service{}, err
+	}
+
+	for _, service := range serviceList {
+		if service.Spec.Name == serviceName {
+			log.Debugf("Service %s found", serviceName)
+			return service, nil
+		}
+	}
+
+	return swarm.Service{}, errors.New("Service not found:" + serviceName)
 }
 
 // Escape beginning slash "/", convert all others to dash "-"
